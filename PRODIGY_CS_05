@@ -1,0 +1,118 @@
+import ttkbootstrap as tb
+from ttkbootstrap.constants import *
+from tkinter import messagebox
+from scapy.all import sniff, IP, TCP, UDP, ICMP
+import threading
+import datetime
+import os
+import sys
+
+# Global flag to control the sniffer
+sniffing = False
+
+def packet_callback(packet):
+    """
+    Runs every time a packet is caught. Extracts IP and Protocol info.
+    """
+    if not sniffing:
+        return
+
+    # specific check: Scapy sometimes captures non-IP packets
+    if IP in packet:
+        try:
+            src_ip = packet[IP].src
+            dst_ip = packet[IP].dst
+            length = len(packet)
+            
+            # Identify Protocol
+            if TCP in packet:
+                proto = "TCP"
+            elif UDP in packet:
+                proto = "UDP"
+            elif ICMP in packet:
+                proto = "ICMP"
+            else:
+                proto = "Other"
+
+            # simplistic payload preview
+            payload = "N/A"
+            if packet.haslayer(TCP):
+                payload = str(bytes(packet[TCP].payload)[:20]) # First 20 bytes
+
+            timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+
+            # Add to the GUI list
+            tree.insert("", 0, values=(timestamp, src_ip, dst_ip, proto, length, payload))
+        except Exception:
+            pass # Skip malformed packets
+
+def start_sniffing():
+    global sniffing
+    if sniffing: return
+
+    sniffing = True
+    btn_start.config(state="disabled")
+    btn_stop.config(state="normal")
+    lbl_status.config(text="Status: Sniffing...", bootstyle="success")
+    
+    # Run in background thread so GUI doesn't freeze
+    t = threading.Thread(target=run_sniffer, daemon=True)
+    t.start()
+
+def run_sniffer():
+    try:
+        # 'store=False' prevents memory filling up
+        sniff(prn=packet_callback, store=False, stop_filter=lambda x: not sniffing)
+    except Exception as e:
+        messagebox.showerror("Error", f"Sniffer Failed!\nDid you install Npcap?\n\nError: {e}")
+        stop_sniffing()
+
+def stop_sniffing():
+    global sniffing
+    sniffing = False
+    btn_start.config(state="normal")
+    btn_stop.config(state="disabled")
+    lbl_status.config(text="Status: Stopped", bootstyle="danger")
+
+# --- GUI SETUP ---
+app = tb.Window(themename="cyborg")
+app.title("Network Packet Sniffer")
+app.geometry("800x500")
+
+lbl_title = tb.Label(app, text="Network Traffic Analyzer", font=("Helvetica", 16, "bold"), bootstyle="info")
+lbl_title.pack(pady=10)
+
+# Buttons
+frame_btns = tb.Frame(app)
+frame_btns.pack(pady=10)
+
+btn_start = tb.Button(frame_btns, text="Start Capture", bootstyle="success", command=start_sniffing)
+btn_start.pack(side=LEFT, padx=10)
+
+btn_stop = tb.Button(frame_btns, text="Stop", bootstyle="danger", command=stop_sniffing, state="disabled")
+btn_stop.pack(side=LEFT, padx=10)
+
+# The Table
+columns = ("time", "src", "dst", "proto", "len", "payload")
+tree = tb.Treeview(app, columns=columns, show="headings", bootstyle="primary")
+
+tree.heading("time", text="Time")
+tree.heading("src", text="Source")
+tree.heading("dst", text="Destination")
+tree.heading("proto", text="Protocol")
+tree.heading("len", text="Size")
+tree.heading("payload", text="Data Preview")
+
+tree.column("time", width=80)
+tree.column("src", width=120)
+tree.column("dst", width=120)
+tree.column("proto", width=60)
+tree.column("len", width=50)
+tree.column("payload", width=250)
+
+tree.pack(fill=BOTH, expand=YES, padx=10, pady=10)
+
+lbl_status = tb.Label(app, text="Ready", bootstyle="secondary")
+lbl_status.pack(side=BOTTOM, pady=5)
+
+app.mainloop()
