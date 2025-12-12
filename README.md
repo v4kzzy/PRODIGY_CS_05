@@ -1,25 +1,39 @@
-# Network Packet Analyzer 🔍
+# 📡 NetGuard // Real-Time Network Packet Inspector
 
-A Python-based GUI tool to capture and analyze network traffic. This tool was developed as part of the **Prodigy InfoTech Cybersecurity Internship (Task 05)**.
+> **A modern, threaded network traffic analyzer built with Python, Scapy, and CustomTkinter.**
 
-It uses `scapy` for packet sniffing and `ttkbootstrap` for a modern, dark-themed user interface.
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
+![Networking](https://img.shields.io/badge/Lib-Scapy-red)
+![GUI](https://img.shields.io/badge/UI-CustomTkinter-green)
 
-## 🚀 Features
-- **Real-time Packet Capture:** Sniffs network traffic on the fly.
-- **Protocol Analysis:** Identifies TCP, UDP, and ICMP packets.
-- **Payload Preview:** Shows a snippet of the data payload (first 20 bytes).
-- **GUI Interface:** Start/Stop controls and a sortable data table.
-- **Multi-threading:** Keeps the interface responsive while sniffing.
+## 📖 Overview
 
-## 🛠️ Prerequisites (Windows)
-To run this tool on Windows, you **must** have the Npcap driver installed. Python cannot access the network card without it.
+**NetGuard** is a graphical network packet sniffer that acts as a lightweight alternative to Wireshark. It allows security researchers and students to intercept, view, and analyze network traffic in real-time.
 
-1. **Download Npcap:** [https://npcap.com/#download](https://npcap.com/#download)
-2. **Install:** During installation, check the box:  
-   `"Install Npcap in WinPcap API-compatible Mode"`
+Unlike standard command-line sniffers, NetGuard features a **Dark Mode GUI** with a threaded backend, ensuring the application remains responsive even during high-traffic capture sessions. It includes deep-packet inspection capabilities, allowing users to drill down into the raw payload and headers of every captured frame.
 
-## 📦 Installation
 
-1. **Clone the repository:**
-   ```bash
-   git clone
+*(Add a screenshot of your tool running here)*
+
+---
+
+## ✨ Key Features
+
+* **⚡ Real-Time Capture:** Sniff TCP, UDP, and ICMP packets as they traverse your network interface.
+* **🔍 Deep Inspection:** Click any row to view the full packet breakdown (Hex dump, Flags, Options, Payload).
+* **🎨 Hybrid UI:** Combines modern `CustomTkinter` controls with a custom-styled, dark-mode data grid.
+* **🛡️ BPF Filtering:** Supports standard Berkeley Packet Filters (e.g., `tcp port 80` or `host 192.168.1.5`).
+* **🧵 Multi-Threaded:** The sniffing engine runs on a daemon thread, preventing UI freezes.
+
+---
+
+## 🛠️ Prerequisites & Installation
+
+### 1. System Requirements
+* **Python:** 3.8 or higher.
+* **Windows:** You must install **[Npcap](https://npcap.com/#download)** (Select "Install in API-compatible Mode").
+* **Linux/Mac:** You must have `sudo` / root privileges to capture traffic.
+
+### 2. Install Dependencies
+```bash
+pip install customtkinter scapy
