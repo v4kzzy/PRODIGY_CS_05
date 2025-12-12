@@ -1,118 +1,251 @@
-import ttkbootstrap as tb
-from ttkbootstrap.constants import *
-from tkinter import messagebox
-from scapy.all import sniff, IP, TCP, UDP, ICMP
+import customtkinter as ctk
+from tkinter import ttk
 import threading
+import time
 import datetime
-import os
-import sys
+from scapy.all import sniff, IP, TCP, UDP, ICMP
 
-# Global flag to control the sniffer
-sniffing = False
+# --- CONFIGURATION ---
+ctk.set_appearance_mode("Dark")
+ctk.set_default_color_theme("dark-blue")
 
-def packet_callback(packet):
-    """
-    Runs every time a packet is caught. Extracts IP and Protocol info.
-    """
-    if not sniffing:
-        return
+class PacketAnalyzerApp(ctk.CTk):
+    def __init__(self):
+        super().__init__()
 
-    # specific check: Scapy sometimes captures non-IP packets
-    if IP in packet:
-        try:
-            src_ip = packet[IP].src
-            dst_ip = packet[IP].dst
-            length = len(packet)
+        # Window Setup
+        self.title("NetGuard // Real-Time Packet Inspector")
+        self.geometry("1100x700")
+        
+        # State Variables
+        self.is_sniffing = False
+        self.packet_count = 0
+        self.sniff_thread = None
+        self.stop_event = threading.Event()
+
+        # Layout Configuration
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        # ====================
+        # TOP CONTROL PANEL
+        # ====================
+        self.control_frame = ctk.CTkFrame(self, height=60, corner_radius=0)
+        self.control_frame.grid(row=0, column=0, sticky="ew", padx=0, pady=0)
+        
+        self.logo = ctk.CTkLabel(self.control_frame, text="NETGUARD", font=ctk.CTkFont(size=20, weight="bold"))
+        self.logo.pack(side="left", padx=20, pady=15)
+
+        self.btn_start = ctk.CTkButton(self.control_frame, text="▶ START CAPTURE", width=140, fg_color="#2ECC71", text_color="black", command=self.start_capture)
+        self.btn_start.pack(side="left", padx=10)
+
+        self.btn_stop = ctk.CTkButton(self.control_frame, text="⏹ STOP", width=100, fg_color="#E74C3C", command=self.stop_capture, state="disabled")
+        self.btn_stop.pack(side="left", padx=10)
+
+        self.lbl_filter = ctk.CTkLabel(self.control_frame, text="Filter (Optional):")
+        self.lbl_filter.pack(side="left", padx=(20, 5))
+        
+        self.filter_entry = ctk.CTkEntry(self.control_frame, placeholder_text="e.g. tcp or udp port 80", width=200)
+        self.filter_entry.pack(side="left", padx=5)
+
+        self.lbl_status = ctk.CTkLabel(self.control_frame, text="Status: Idle", text_color="gray")
+        self.lbl_status.pack(side="right", padx=20)
+
+        # ====================
+        # MIDDLE: PACKET TABLE
+        # ====================
+        # CustomTkinter doesn't have a table, so we use the standard tkinter Treeview
+        # and style it to match the dark theme.
+        self.tree_frame = ctk.CTkFrame(self)
+        self.tree_frame.grid(row=1, column=0, sticky="nsew", padx=20, pady=20)
+        
+        # Define Columns
+        columns = ("No", "Time", "Source", "Destination", "Protocol", "Length", "Info")
+        self.tree = ttk.Treeview(self.tree_frame, columns=columns, show="headings", selectmode="browse")
+        
+        # Setup Headings & Widths
+        self.tree.heading("No", text="No.")
+        self.tree.column("No", width=50, anchor="center")
+        
+        self.tree.heading("Time", text="Time")
+        self.tree.column("Time", width=100, anchor="center")
+        
+        self.tree.heading("Source", text="Source IP")
+        self.tree.column("Source", width=150, anchor="center")
+        
+        self.tree.heading("Destination", text="Dest IP")
+        self.tree.column("Destination", width=150, anchor="center")
+        
+        self.tree.heading("Protocol", text="Protocol")
+        self.tree.column("Protocol", width=80, anchor="center")
+        
+        self.tree.heading("Length", text="Len")
+        self.tree.column("Length", width=60, anchor="center")
+        
+        self.tree.heading("Info", text="Info / Payload Snippet")
+        self.tree.column("Info", width=300, anchor="w")
+
+        # Scrollbar
+        self.scrollbar = ctk.CTkScrollbar(self.tree_frame, command=self.tree.yview)
+        self.tree.configure(yscroll=self.scrollbar.set)
+        
+        self.tree.pack(side="left", fill="both", expand=True)
+        self.scrollbar.pack(side="right", fill="y")
+        
+        # Bind click event to show details
+        self.tree.bind("<<TreeviewSelect>>", self.on_packet_select)
+
+        # Apply Dark Style to the standard Treeview
+        self.style_treeview()
+
+        # ====================
+        # BOTTOM: DETAILS PANE
+        # ====================
+        self.detail_frame = ctk.CTkFrame(self, height=150)
+        self.detail_frame.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 20))
+        
+        self.detail_label = ctk.CTkLabel(self.detail_frame, text="Raw Payload / Hex View", font=ctk.CTkFont(size=12, weight="bold"))
+        self.detail_label.pack(anchor="w", padx=10, pady=5)
+        
+        self.detail_text = ctk.CTkTextbox(self.detail_frame, height=120, font=ctk.CTkFont(family="Consolas", size=12))
+        self.detail_text.pack(fill="both", padx=10, pady=(0, 10))
+        self.detail_text.configure(state="disabled")
+
+        # Storage for packet objects so we can show details later
+        self.packet_storage = []
+
+    def style_treeview(self):
+        """Hacks the standard TTK Treeview to look 'Dark Mode'."""
+        style = ttk.Style()
+        style.theme_use("clam")
+        
+        # Treeview colors
+        style.configure("Treeview",
+                        background="#2b2b2b",
+                        foreground="white",
+                        rowheight=25,
+                        fieldbackground="#2b2b2b",
+                        bordercolor="#2b2b2b")
+        
+        # Heading colors
+        style.configure("Treeview.Heading",
+                        background="#1f1f1f",
+                        foreground="white",
+                        relief="flat")
+        
+        # Hover effect
+        style.map("Treeview",
+                  background=[('selected', '#1f538d')])
+
+    def start_capture(self):
+        self.is_sniffing = True
+        self.stop_event.clear()
+        
+        # Update UI Controls
+        self.btn_start.configure(state="disabled")
+        self.btn_stop.configure(state="normal")
+        self.filter_entry.configure(state="disabled")
+        self.lbl_status.configure(text="Status: CAPTURING...", text_color="#2ECC71")
+        
+        # Start background thread
+        self.sniff_thread = threading.Thread(target=self.sniff_packets)
+        self.sniff_thread.daemon = True
+        self.sniff_thread.start()
+
+    def stop_capture(self):
+        self.is_sniffing = False
+        self.stop_event.set()
+        
+        self.btn_start.configure(state="normal")
+        self.btn_stop.configure(state="disabled")
+        self.filter_entry.configure(state="normal")
+        self.lbl_status.configure(text="Status: Stopped", text_color="gray")
+
+    def sniff_packets(self):
+        # Determine filter
+        user_filter = self.filter_entry.get().strip()
+        if user_filter == "":
+            user_filter = None
             
-            # Identify Protocol
-            if TCP in packet:
-                proto = "TCP"
-            elif UDP in packet:
-                proto = "UDP"
-            elif ICMP in packet:
-                proto = "ICMP"
-            else:
-                proto = "Other"
+        try:
+            # Sniff function (blocking, so we use a loop with timeout to allow stopping)
+            # We use `sniff(count=1)` inside a loop to check the stop_event frequently
+            # Note: For high performance, you'd use AsyncSniffer, but this is clearer for learning.
+            def packet_callback(pkt):
+                if self.stop_event.is_set():
+                    return
+                self.process_packet(pkt)
 
-            # simplistic payload preview
-            payload = "N/A"
-            if packet.haslayer(TCP):
-                payload = str(bytes(packet[TCP].payload)[:20]) # First 20 bytes
+            sniff(filter=user_filter, prn=packet_callback, store=0, stop_filter=lambda x: self.stop_event.is_set())
+            
+        except Exception as e:
+            print(f"Error: {e}")
+            self.lbl_status.configure(text=f"Error: {e}", text_color="#E74C3C")
+            self.stop_capture()
 
-            timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+    def process_packet(self, pkt):
+        if not pkt.haslayer(IP):
+            return
 
-            # Add to the GUI list
-            tree.insert("", 0, values=(timestamp, src_ip, dst_ip, proto, length, payload))
-        except Exception:
-            pass # Skip malformed packets
+        self.packet_count += 1
+        
+        # 1. Extract Info
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+        src_ip = pkt[IP].src
+        dst_ip = pkt[IP].dst
+        length = len(pkt)
+        
+        # Determine Protocol
+        proto = "Other"
+        info = ""
+        
+        if pkt.haslayer(TCP):
+            proto = "TCP"
+            info = f"Port: {pkt[TCP].sport} -> {pkt[TCP].dport} | Flags: {pkt[TCP].flags}"
+        elif pkt.haslayer(UDP):
+            proto = "UDP"
+            info = f"Port: {pkt[UDP].sport} -> {pkt[UDP].dport}"
+        elif pkt.haslayer(ICMP):
+            proto = "ICMP"
+            info = f"Type: {pkt[ICMP].type} Code: {pkt[ICMP].code}"
 
-def start_sniffing():
-    global sniffing
-    if sniffing: return
+        # 2. Store packet data for "Details" view
+        # We store a tuple of (Raw String, Hex String)
+        try:
+            payload_raw = str(pkt[IP].payload)
+            payload_hex = bytes(pkt[IP].payload).hex()
+        except:
+            payload_raw = "Could not parse payload"
+            payload_hex = ""
+            
+        self.packet_storage.append(pkt.show(dump=True)) # Store full dump string
 
-    sniffing = True
-    btn_start.config(state="disabled")
-    btn_stop.config(state="normal")
-    lbl_status.config(text="Status: Sniffing...", bootstyle="success")
-    
-    # Run in background thread so GUI doesn't freeze
-    t = threading.Thread(target=run_sniffer, daemon=True)
-    t.start()
+        # 3. Update UI (Must be thread safe-ish, Tkinter handles basic calls well from threads)
+        # For a truly robust app, use self.after(), but direct calls usually work in simple PyApps
+        row_data = (self.packet_count, timestamp, src_ip, dst_ip, proto, length, info)
+        self.tree.insert("", "end", values=row_data)
+        
+        # Auto-scroll to bottom
+        self.tree.yview_moveto(1)
 
-def run_sniffer():
-    try:
-        # 'store=False' prevents memory filling up
-        sniff(prn=packet_callback, store=False, stop_filter=lambda x: not sniffing)
-    except Exception as e:
-        messagebox.showerror("Error", f"Sniffer Failed!\nDid you install Npcap?\n\nError: {e}")
-        stop_sniffing()
+    def on_packet_select(self, event):
+        # Get selected item
+        selected_item = self.tree.selection()
+        if not selected_item:
+            return
+        
+        # Get index (Packet Number - 1)
+        item_vals = self.tree.item(selected_item)['values']
+        packet_idx = int(item_vals[0]) - 1
+        
+        if packet_idx < len(self.packet_storage):
+            full_details = self.packet_storage[packet_idx]
+            
+            self.detail_text.configure(state="normal")
+            self.detail_text.delete("0.0", "end")
+            self.detail_text.insert("0.0", full_details)
+            self.detail_text.configure(state="disabled")
 
-def stop_sniffing():
-    global sniffing
-    sniffing = False
-    btn_start.config(state="normal")
-    btn_stop.config(state="disabled")
-    lbl_status.config(text="Status: Stopped", bootstyle="danger")
-
-# --- GUI SETUP ---
-app = tb.Window(themename="cyborg")
-app.title("Network Packet Sniffer")
-app.geometry("800x500")
-
-lbl_title = tb.Label(app, text="Network Traffic Analyzer", font=("Helvetica", 16, "bold"), bootstyle="info")
-lbl_title.pack(pady=10)
-
-# Buttons
-frame_btns = tb.Frame(app)
-frame_btns.pack(pady=10)
-
-btn_start = tb.Button(frame_btns, text="Start Capture", bootstyle="success", command=start_sniffing)
-btn_start.pack(side=LEFT, padx=10)
-
-btn_stop = tb.Button(frame_btns, text="Stop", bootstyle="danger", command=stop_sniffing, state="disabled")
-btn_stop.pack(side=LEFT, padx=10)
-
-# The Table
-columns = ("time", "src", "dst", "proto", "len", "payload")
-tree = tb.Treeview(app, columns=columns, show="headings", bootstyle="primary")
-
-tree.heading("time", text="Time")
-tree.heading("src", text="Source")
-tree.heading("dst", text="Destination")
-tree.heading("proto", text="Protocol")
-tree.heading("len", text="Size")
-tree.heading("payload", text="Data Preview")
-
-tree.column("time", width=80)
-tree.column("src", width=120)
-tree.column("dst", width=120)
-tree.column("proto", width=60)
-tree.column("len", width=50)
-tree.column("payload", width=250)
-
-tree.pack(fill=BOTH, expand=YES, padx=10, pady=10)
-
-lbl_status = tb.Label(app, text="Ready", bootstyle="secondary")
-lbl_status.pack(side=BOTTOM, pady=5)
-
-app.mainloop()
+if __name__ == "__main__":
+    app = PacketAnalyzerApp()
+    app.mainloop()
